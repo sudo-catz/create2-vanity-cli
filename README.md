@@ -1,6 +1,6 @@
 # EVM Smart Contract Vanity Address Generator
 
-This Rust helper brute-forces CREATE2 salts so you can land contracts (via `Create2Factory`) at vanity addresses. It consumes Hardhat artifacts (or any JSON artifact with `bytecode`), so you can point it at any compiled contract without rewriting init code by hand.
+This Rust helper brute-forces CREATE2 salts so you can land contracts (via `Create2Factory` or the universal CREATE2 deployer) at vanity addresses. It consumes Hardhat artifacts (or any JSON artifact with `bytecode`), so you can point it at any compiled contract without rewriting init code by hand.
 
 ## Features
 
@@ -64,3 +64,25 @@ Output shows the deterministic CREATE2 child address plus its checksum so you ca
 - Funnel status logging through a single channel/thread to avoid `println!` contention on huge runs.
 
 PRs welcome if you add distributed search, checkpointing, or alternate front-ends!
+
+## Bonus: deploying through the universal CREATE2 factory
+
+Many networks ship the singleton CREATE2 deployer at `0x4e59b44847B379578588920cA78FbF26c0B4956C`. It has no ABI—just send calldata encoded as `salt (32 bytes) || init_code`. You can pipe the artifact + salt that this tool found into `scripts/build-create2-calldata.ts`:
+
+```bash
+npm exec tsx scripts/build-create2-calldata.ts \
+  --salt 0xYourSaltFoundByVanityTool \
+  --artifact artifacts/contracts/SimpleStorage.sol/SimpleStorage.json \
+  --out calldata.txt
+```
+
+That writes the calldata blob to `calldata.txt` (and displays it in stdout). Broadcast it with your favorite sender, e.g.:
+
+```bash
+cast send 0x4e59b44847B379578588920cA78FbF26c0B4956C \
+  --value 0 \
+  --data $(cat calldata.txt) \
+  --rpc-url <rpc>
+```
+
+The singleton will CREATE2-deploy the provided init code using the exact salt you searched for, yielding the deterministic vanity address. Once your own `Create2Factory` is live you can call its ABI directly, but the universal deployer is perfect for bootstrapping the very first factory or any one-off vanity contract.
