@@ -6,6 +6,7 @@ use hex::FromHex;
 use rand::Rng;
 use rayon::ThreadPoolBuilder;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{
     fs,
     io::Cursor,
@@ -80,6 +81,10 @@ struct Args {
     /// Attempts between checkpoint flushes (only used with --checkpoint).
     #[arg(long, default_value_t = 100_000)]
     checkpoint_interval: u64,
+
+    /// Optional path to write the result (JSON) when a matching salt is found.
+    #[arg(long)]
+    output: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -94,6 +99,24 @@ struct CheckpointFile {
     next_attempt: u64,
     base_seed: u64,
     config_hash: String,
+}
+
+#[derive(Serialize)]
+struct SearchResult {
+    factory: String,
+    salt: String,
+    address: String,
+    checksum: String,
+    init_hash: String,
+    attempts: u64,
+    attempts_limit: Option<u64>,
+    seed: u64,
+    prefix: Option<String>,
+    suffix: Option<String>,
+    checksum_match: bool,
+    artifact: String,
+    bytecode_source: String,
+    constructor_args: Option<Vec<String>>,
 }
 
 const ATTEMPT_BATCH: u64 = 2048;
@@ -163,6 +186,18 @@ impl CheckpointWriter {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+
+    let artifact_path_str = args.artifact.display().to_string();
+    let bytecode_source = match (args.bytecode.is_some(), args.constructor_args.as_ref()) {
+        (true, Some(_)) => "inline-bytecode+constructor-args".to_string(),
+        (true, None) => "inline-bytecode".to_string(),
+        (false, Some(_)) => "artifact+constructor-args".to_string(),
+        (false, None) => "artifact".to_string(),
+    };
+    let output_path = args
+        .output
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("salt.json"));
 
     let factory = parse_address(&args.factory)?;
     let need_artifact = args.bytecode.is_none() || args.constructor_args.is_some();
@@ -442,8 +477,37 @@ fn main() -> Result<()> {
         );
         println!("Salt      : {}", format_hex(&salt));
         println!("Address   : {}", format_hex(&address));
-        println!("Checksum  : {}", checksum_address(&address));
+        let checksum = checksum_address(&address);
+        println!("Checksum  : {}", checksum);
         println!("Init hash : {}", format_hex(&init_hash));
+
+        let report = SearchResult {
+            factory: format_hex(&factory),
+            salt: format_hex(&salt),
+            address: format_hex(&address),
+            checksum,
+            init_hash: format_hex(&init_hash),
+            attempts: attempts_needed,
+            attempts_limit: if max_attempts == u64::MAX {
+                None
+            } else {
+                Some(max_attempts)
+            },
+            seed: base_seed,
+            prefix: prefix.clone(),
+            suffix: suffix.clone(),
+            checksum_match: checksum_mode,
+            artifact: artifact_path_str.clone(),
+            bytecode_source: bytecode_source.clone(),
+            constructor_args: args.constructor_args.clone(),
+        };
+        match append_result_file(&output_path, &report) {
+            Ok(_) => println!("Result saved to {}", output_path.display()),
+            Err(err) => eprintln!(
+                "Failed to write result file {}: {err:?}",
+                output_path.display()
+            ),
+        }
     } else {
         println!();
         println!(
@@ -606,6 +670,32 @@ fn save_checkpoint_file(path: &Path, payload: &CheckpointFile) -> Result<()> {
     let data = serde_json::to_vec_pretty(payload)?;
     fs::write(path, data)
         .with_context(|| format!("Failed to write checkpoint {}", path.display()))?;
+    Ok(())
+}
+
+fn append_result_file(path: &Path, report: &SearchResult) -> Result<()> {
+    let mut entries: Vec<Value> = Vec::new();
+    if path.exists() {
+        let raw = fs::read_to_string(path)
+            .with_context(|| format!("Failed to read existing result file {}", path.display()))?;
+        if !raw.trim().is_empty() {
+            let existing: Value = serde_json::from_str(&raw).with_context(|| {
+                format!("Failed to parse existing result file {}", path.display())
+            })?;
+            match existing {
+                Value::Array(arr) => {
+                    entries = arr;
+                }
+                other => {
+                    entries.push(other);
+                }
+            }
+        }
+    }
+    entries.push(serde_json::to_value(report)?);
+    let data = serde_json::to_vec_pretty(&entries)?;
+    fs::write(path, data)
+        .with_context(|| format!("Failed to write result file {}", path.display()))?;
     Ok(())
 }
 

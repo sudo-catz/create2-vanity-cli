@@ -43,6 +43,7 @@ Key flags (mirrors `--help`):
 - `--checkpoint <path>` – periodically write a JSON checkpoint with the next attempt counter + config hash.
 - `--resume <path>` – restart from a previously saved checkpoint (enforces matching config + seed).
 - `--checkpoint-interval <n>` – attempts between checkpoint flushes (default: 100k).
+- `--output <path>` – override the default `salt.json` result file (multiple hits append).
 
 If neither `--prefix` nor `--suffix` is provided you must pass `--salt`.
 
@@ -59,6 +60,12 @@ Constructor encoding: the tool reads the artifact ABI and, if you pass `--constr
 - Pass `--checkpoint checkpoint.json` to write the current attempt counter every `--checkpoint-interval` attempts (defaults to 100k). The file stores the base seed, config hash, and the next attempt to try.
 - Use `--resume checkpoint.json` (optionally along with `--checkpoint` to keep updating the same file) to continue exactly where you left off. The CLI verifies the hash of all search parameters plus the seed to prevent mismatched resumes.
 - Because salts depend only on `(seed, attempt)`, resuming does not re-check previously tested salts—execution jumps straight to the stored attempt ID.
+
+## Result exports
+
+- Every successful search appends a JSON object to `salt.json` (newline-agnostic array). Use `--output custom.json` to write to a different file/path.
+- Each entry includes the seed, attempts needed, checksum settings, prefix/suffix, artifact path, bytecode source, constructor args, and the computed `salt/address/checksum/initHash`.
+- The JSON array can be scraped by scripts or dashboards so long brute-force jobs don’t require copying from terminal scrollback.
 
 ## Example: predict a known salt
 
