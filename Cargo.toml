@@ -16,3 +16,6 @@ ethabi = { version = "18.0", default-features = false, features = ["full-serde",
 k256 = { version = "0.13", features = ["ecdsa"] }
 bip39 = "1.1"
 bip32 = { version = "0.5", features = ["secp256k1"] }
+bs58 = "0.5"
+ed25519-dalek = { version = "1.0", features = ["std"] }
+ed25519-dalek-bip32 = "0.3"

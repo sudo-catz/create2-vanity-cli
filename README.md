@@ -1,11 +1,12 @@
 # EVM Vanity Toolkit
 
-Two binaries live in this workspace:
+These binaries live in this workspace:
 
 - **`create2-vanity`** – brute-forces CREATE2 salts so contracts deployed via `Create2Factory` (or the universal CREATE2 deployer) can land at vanity addresses. It reads Hardhat artifacts, ABI-encodes constructor args for you, and mirrors the exact hashing that a chain performs before CREATE2 deployments.
 - **`vanity_eoa`** – brute-forces externally-owned account (EOA) private keys whose addresses match a desired prefix/suffix. It reuses the same deterministic scheduling, checkpoint/resume flow, and exposes progress stats that dashboards can scrape.
+- **`vanity_solana`** – brute-forces Solana keypairs (Base58 addresses) with the same deterministic `(seed, attempt)` schedule plus optional BIP-39 output and HD derivation paths.
 
-Both binaries are CPU-bound Rust executables built on Rayon for multi-threading and TinyKeccak for hashing.
+All binaries are CPU-bound Rust executables built on Rayon for multi-threading and TinyKeccak for hashing.
 
 ## Installation
 
@@ -36,6 +37,15 @@ cargo run --release --bin vanity_eoa -- \
   --checksum-match \
   --checkpoint vanity-checkpoint.json \
   --stats-interval 10 --stats-json
+```
+
+### Solana vanity keys
+
+```bash
+cargo run --release --bin vanity_solana -- \
+  --prefix SoL --suffix 111 \
+  --mnemonic --checkpoint results/solana-checkpoint.json \
+  --stats-interval 15
 ```
 
 ## Repository layout
@@ -74,9 +84,19 @@ cargo run --release --bin vanity_eoa -- \
 - `--stats-interval <seconds>` – emit periodic progress (attempts checked + attempts/s). Set to 0 to disable.
 - `--stats-json` – emit stats as `STATS {"attempts":…}` JSON instead of human text, perfect for dashboards.
 
+### `vanity_solana`
+
+- `--prefix`, `--suffix`, `--attempts`, `--threads`, `--seed` – same semantics as the Ethereum EOA binary, but matching against Base58 strings.
+- `--checkpoint <path>` / `--resume <path>` / `--checkpoint-interval <n>` – deterministic checkpoints for long Solana grinds.
+- `--output <file>` – defaults to `results/vanity-solana.json`. Each entry includes Base58 + hex private keys, the Base58 keypair blob, mnemonic/path (when enabled), and attempt metadata.
+- `--mnemonic` – emit a 24-word BIP-39 phrase and derive the ed25519 key through the provided path (default: `m/44'/501'/0'/0'`).
+- `--hd-path <path>` – override the Solana derivation path.
+- `--derive-attempt <n>` – with `--seed`, reconstruct a specific attempt (prints the Base58 key + mnemonic) and exit.
+- `--stats-interval`, `--stats-json` – same stats toggles as the other binaries.
+
 ## Deterministic search & seeds
 
-Both binaries derive work items from `(seed, attempt_id)`. CREATE2 salts hash the tuple into a 32-byte salt; the EOA searcher hashes it into private key material (discarding invalid keys). This guarantees:
+All binaries derive work items from `(seed, attempt_id)`. CREATE2 salts hash the tuple into a 32-byte salt; the EOA/Solana searchers hash it into private key material (discarding invalid keys). This guarantees:
 
 - Reproducibility – using the same seed and attempt range replays the exact salts/keys.
 - Safe sharding – give each machine a unique seed to avoid overlapping attempts.
@@ -94,7 +114,7 @@ If you omit `--seed`, the CLI draws a random seed and prints it so you can reuse
 
 ## Result exports
 
-Both binaries append hits under `results/` (`results/salt.json` or `results/vanity-eoa.json`). Entries capture:
+All vanity binaries append hits under `results/` (`results/salt.json`, `results/vanity-eoa.json`, or `results/vanity-solana.json`). Entries capture:
 
 - Inputs: factory, artifact path, constructor args, prefix/suffix, checksum mode, seed.
 - Outputs: salt, contract address, checksum, init-code hash (CREATE2) **or** private key, public key, optional mnemonic + derivation path, address, checksum (EOA).
