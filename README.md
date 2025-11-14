@@ -5,6 +5,7 @@ These binaries live in this workspace:
 - **`create2-vanity`** – brute-forces CREATE2 salts so contracts deployed via `Create2Factory` (or the universal CREATE2 deployer) can land at vanity addresses. It reads Hardhat artifacts, ABI-encodes constructor args for you, and mirrors the exact hashing that a chain performs before CREATE2 deployments.
 - **`vanity_eoa`** – brute-forces externally-owned account (EOA) private keys whose addresses match a desired prefix/suffix. It reuses the same deterministic scheduling, checkpoint/resume flow, and exposes progress stats that dashboards can scrape.
 - **`vanity_solana`** – brute-forces Solana keypairs (Base58 addresses) with the same deterministic `(seed, attempt)` schedule plus optional BIP-39 output and HD derivation paths.
+- **`vanity_bitcoin`** – brute-forces Bitcoin addresses (Base58 P2PKH `1…`, Bech32 v0 `bc1q…`, or Bech32 v1 `bc1p…`) plus compressed WIFs, optional BIP-39 output, and checkpoints.
 
 All binaries are CPU-bound Rust executables built on Rayon for multi-threading and TinyKeccak for hashing.
 
@@ -46,6 +47,31 @@ cargo run --release --bin vanity_solana -- \
   --prefix SoL --suffix 111 \
   --mnemonic --checkpoint results/solana-checkpoint.json \
   --stats-interval 15
+```
+
+### Bitcoin vanity keys
+
+```bash
+cargo run --release --bin vanity_bitcoin -- \
+  --prefix 1Bad \
+  --checkpoint results/btc-checkpoint.json \
+  --stats-interval 10 --stats-json
+```
+
+Add `--format bech32` (witness version 0) to target SegWit P2WPKH `bc1q…` addresses (prefix/suffix must be lowercase Bech32 characters):
+
+```bash
+cargo run --release --bin vanity_bitcoin -- \
+  --format bech32 --prefix bc1sol \
+  --checkpoint results/btc-checkpoint.json
+```
+
+Use `--witness-version 1` to search Taproot `bc1p…` outputs (Bech32m):
+
+```bash
+cargo run --release --bin vanity_bitcoin -- \
+  --format bech32 --witness-version 1 --prefix bc1pbad \
+  --checkpoint results/btc-checkpoint.json
 ```
 
 ## Repository layout
@@ -94,6 +120,18 @@ cargo run --release --bin vanity_solana -- \
 - `--derive-attempt <n>` – with `--seed`, reconstruct a specific attempt (prints the Base58 key + mnemonic) and exit.
 - `--stats-interval`, `--stats-json` – same stats toggles as the other binaries.
 
+### `vanity_bitcoin`
+
+- `--format <p2pkh|bech32>` – choose legacy Base58 (`1…`) or SegWit Bech32 (`bc1…`). Defaults to `p2pkh`.
+- `--witness-version <0-16>` – only meaningful when `--format bech32`. Version 0 emits P2WPKH (`bc1q…`, Bech32), version 1 emits Taproot (`bc1p…`, Bech32m). Other versions currently error out.
+- `--prefix`, `--suffix`, `--attempts`, `--threads`, `--seed` – same semantics as the Solana binary. Prefix/suffix must use Base58 characters for P2PKH or lowercase Bech32 characters for SegWit.
+- `--checkpoint <path>` / `--resume <path>` / `--checkpoint-interval <n>` – Bitcoin search supports the same deterministic checkpoints.
+- `--output <file>` – defaults to `results/vanity-bitcoin.json`. Each entry includes the hex private key, compressed WIF, address, mnemonic/path, and metadata.
+- `--mnemonic` – emit a 24-word BIP-39 phrase and derive the key under the supplied path (default `m/44'/0'/0'/0/0`).
+- `--hd-path <path>` – override the derivation path used when `--mnemonic` is set.
+- `--derive-attempt <n>` – reconstruct a specific attempt (address + WIF + mnemonic) when running with `--seed`.
+- `--stats-interval`, `--stats-json` – identical stats options as other binaries.
+
 ## Deterministic search & seeds
 
 All binaries derive work items from `(seed, attempt_id)`. CREATE2 salts hash the tuple into a 32-byte salt; the EOA/Solana searchers hash it into private key material (discarding invalid keys). This guarantees:
@@ -114,7 +152,7 @@ If you omit `--seed`, the CLI draws a random seed and prints it so you can reuse
 
 ## Result exports
 
-All vanity binaries append hits under `results/` (`results/salt.json`, `results/vanity-eoa.json`, or `results/vanity-solana.json`). Entries capture:
+All vanity binaries append hits under `results/` (`results/salt.json`, `results/vanity-eoa.json`, `results/vanity-solana.json`, or `results/vanity-bitcoin.json`). Entries capture:
 
 - Inputs: factory, artifact path, constructor args, prefix/suffix, checksum mode, seed.
 - Outputs: salt, contract address, checksum, init-code hash (CREATE2) **or** private key, public key, optional mnemonic + derivation path, address, checksum (EOA).
