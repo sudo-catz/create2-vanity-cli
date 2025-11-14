@@ -14,9 +14,10 @@ use anyhow::{anyhow, Context, Result};
 use bip32::{DerivationPath, XPrv};
 use bip39::{Language, Mnemonic};
 use clap::Parser;
-use k256::{elliptic_curve::sec1::ToEncodedPoint, SecretKey};
+use once_cell::sync::Lazy;
 use rand::Rng;
 use rayon::ThreadPoolBuilder;
+use secp256k1::{All, PublicKey as SecpPublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tiny_keccak::{Hasher, Keccak};
@@ -196,6 +197,8 @@ struct CandidateKey {
     mnemonic: Option<String>,
 }
 
+static SECP256K1: Lazy<Secp256k1<All>> = Lazy::new(Secp256k1::new);
+
 impl KeyMode {
     fn path_string(&self) -> Option<&str> {
         match self {
@@ -249,7 +252,7 @@ fn main() -> Result<()> {
         let address = address_from_secret(&candidate.secret);
         let checksum = checksum_address(&address);
         println!("Derived attempt {}", target_attempt);
-        let private_key = candidate.secret.to_bytes();
+        let private_key = candidate.secret.secret_bytes();
         let public_key = public_key_bytes(&candidate.secret);
         println!("Private   : 0x{}", hex::encode(private_key));
         println!("Public    : 0x{}", hex::encode(&public_key));
@@ -499,7 +502,7 @@ fn main() -> Result<()> {
             "Found vanity key after {} attempts ({:.2?})",
             attempts_needed, elapsed
         );
-        let private_key = candidate.secret.to_bytes();
+        let private_key = candidate.secret.secret_bytes();
         let public_key = public_key_bytes(&candidate.secret);
         println!("Private   : 0x{}", hex::encode(private_key));
         println!("Public    : 0x{}", hex::encode(&public_key));
@@ -572,9 +575,8 @@ fn ensure_hex(value: &str) -> Result<()> {
 }
 
 fn address_from_secret(secret: &SecretKey) -> [u8; 20] {
-    let public = secret.public_key();
-    let encoded = public.to_encoded_point(false);
-    let public_bytes = encoded.as_bytes();
+    let public = SecpPublicKey::from_secret_key(&SECP256K1, secret);
+    let public_bytes = public.serialize_uncompressed();
     let hash = keccak(&public_bytes[1..]);
     let mut out = [0u8; 20];
     out.copy_from_slice(&hash[12..]);
@@ -582,11 +584,8 @@ fn address_from_secret(secret: &SecretKey) -> [u8; 20] {
 }
 
 fn public_key_bytes(secret: &SecretKey) -> Vec<u8> {
-    secret
-        .public_key()
-        .to_encoded_point(false)
-        .as_bytes()
-        .to_vec()
+    let public = SecpPublicKey::from_secret_key(&SECP256K1, secret);
+    public.serialize_uncompressed().to_vec()
 }
 
 fn matches_pattern(
@@ -651,10 +650,21 @@ fn derive_candidate(base_seed: u64, attempt: u64, mode: &KeyMode) -> Option<Cand
 }
 
 fn key_material_from_attempt(base_seed: u64, attempt: u64) -> [u8; 32] {
-    let mut input = [0u8; 16];
-    input[..8].copy_from_slice(&base_seed.to_le_bytes());
-    input[8..].copy_from_slice(&attempt.to_le_bytes());
-    keccak(&input)
+    let mut state = base_seed ^ attempt;
+    let mut out = [0u8; 32];
+    for chunk in out.chunks_mut(8) {
+        state = splitmix64(state);
+        chunk.copy_from_slice(&state.to_le_bytes());
+    }
+    out
+}
+
+fn splitmix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = x;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 fn config_fingerprint(
