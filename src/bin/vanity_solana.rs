@@ -91,6 +91,7 @@ struct VanityResult {
     private_key_hex: String,
     private_key_base58: String,
     keypair_base58: String,
+    keypair_json: String,
     address: String,
     attempts: u64,
     attempts_limit: Option<u64>,
@@ -478,6 +479,7 @@ fn main() -> Result<()> {
             private_key_hex: format!("0x{}", hex::encode(candidate.secret.as_bytes())),
             private_key_base58: bs58::encode(candidate.secret.as_bytes()).into_string(),
             keypair_base58: bs58::encode(&keypair_bytes).into_string(),
+            keypair_json: solana_json_keypair(&candidate.secret, &candidate.public),
             address: address.clone(),
             attempts: attempts_needed,
             attempts_limit: if max_attempts == u64::MAX {
@@ -522,6 +524,10 @@ fn print_candidate(candidate: &CandidateKey, address: &str, mode: &KeyMode) {
     println!("SecretHex : 0x{}", secret_hex);
     println!("Secret58  : {}", private_bs58);
     println!("Keypair58 : {}", keypair_bs58);
+    println!(
+        "KeypairJSON: {}",
+        solana_json_keypair(&candidate.secret, &candidate.public)
+    );
     if let Some(phrase) = candidate.mnemonic.as_ref() {
         println!("Mnemonic  : {}", phrase);
         if let KeyMode::Mnemonic { path_string, .. } = mode {
@@ -611,6 +617,13 @@ fn keypair_bytes(secret: &SecretKey, public: &PublicKey) -> [u8; 64] {
     out[..32].copy_from_slice(secret.as_bytes());
     out[32..].copy_from_slice(public.as_bytes());
     out
+}
+
+fn solana_json_keypair(secret: &SecretKey, public: &PublicKey) -> String {
+    let mut data = Vec::with_capacity(64);
+    data.extend_from_slice(secret.as_bytes());
+    data.extend_from_slice(public.as_bytes());
+    serde_json::to_string(&data).unwrap_or_else(|_| "[]".to_string())
 }
 
 fn config_fingerprint(

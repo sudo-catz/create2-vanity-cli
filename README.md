@@ -88,7 +88,7 @@ cargo run --release --bin vanity_solana -- \
 
 - `--prefix`, `--suffix`, `--attempts`, `--threads`, `--seed` – same semantics as the Ethereum EOA binary, but matching against Base58 strings.
 - `--checkpoint <path>` / `--resume <path>` / `--checkpoint-interval <n>` – deterministic checkpoints for long Solana grinds.
-- `--output <file>` – defaults to `results/vanity-solana.json`. Each entry includes Base58 + hex private keys, the Base58 keypair blob, mnemonic/path (when enabled), and attempt metadata.
+- `--output <file>` – defaults to `results/vanity-solana.json`. Each entry includes Base58 + hex private keys, the Base58 keypair blob, a Solana-compatible JSON keypair array, mnemonic/path (when enabled), and attempt metadata.
 - `--mnemonic` – emit a 24-word BIP-39 phrase and derive the ed25519 key through the provided path (default: `m/44'/501'/0'/0'`).
 - `--hd-path <path>` – override the Solana derivation path.
 - `--derive-attempt <n>` – with `--seed`, reconstruct a specific attempt (prints the Base58 key + mnemonic) and exit.
