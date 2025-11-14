@@ -1,4 +1,4 @@
-# EVM Vanity Toolkit
+# Multichain Vanity Toolkit
 
 These binaries live in this workspace:
 

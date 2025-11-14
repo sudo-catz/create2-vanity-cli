@@ -24,6 +24,7 @@ use tiny_keccak::{Hasher, Keccak};
 
 const ATTEMPT_BATCH: u64 = 2048;
 const PROGRESS_INTERVAL: u64 = 10_000;
+const BASE58_ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 #[derive(Parser, Debug)]
 #[command(name = "vanity_solana")]
@@ -243,9 +244,20 @@ fn main() -> Result<()> {
         }
         let candidate = derive_candidate(base_seed, target_attempt, key_mode.as_ref())
             .ok_or_else(|| anyhow!("Failed to derive attempt {}", target_attempt))?;
-        let address = bs58::encode(candidate.public.as_bytes()).into_string();
+        let mut address_buf = String::with_capacity(44);
+        encode_base58(candidate.public.as_bytes(), &mut address_buf);
+        let address = address_buf.clone();
         println!("Derived attempt {}", target_attempt);
-        print_candidate(&candidate, &address, key_mode.as_ref());
+        let keypair_bytes = keypair_bytes(&candidate.secret, &candidate.public);
+        let keypair_base58 = bs58::encode(&keypair_bytes).into_string();
+        let keypair_json = solana_json_keypair(&keypair_bytes);
+        print_candidate(
+            &candidate,
+            &address,
+            key_mode.as_ref(),
+            &keypair_base58,
+            &keypair_json,
+        );
         return Ok(());
     }
 
@@ -396,6 +408,7 @@ fn main() -> Result<()> {
 
                 s.spawn(move |_| {
                     let mut stop = false;
+                    let mut address_buf = String::with_capacity(44);
 
                     while !stop {
                         if found.load(Ordering::Acquire) {
@@ -431,11 +444,11 @@ fn main() -> Result<()> {
                                 Some(value) => value,
                                 None => continue,
                             };
-                            let address = bs58::encode(candidate.public.as_bytes()).into_string();
+                            encode_base58(candidate.public.as_bytes(), &mut address_buf);
 
-                            if matches_pattern(&address, prefix.as_deref(), suffix.as_deref()) {
+                            if matches_pattern(&address_buf, prefix.as_deref(), suffix.as_deref()) {
                                 let mut guard = result.lock().expect("poisoned mutex");
-                                *guard = Some((candidate, address, attempt_number + 1));
+                                *guard = Some((candidate, address_buf.clone(), attempt_number + 1));
                                 found.store(true, Ordering::Release);
                                 stop = true;
                                 break;
@@ -472,14 +485,21 @@ fn main() -> Result<()> {
             "Found vanity key after {} attempts ({:.2?})",
             attempts_needed, elapsed
         );
-        print_candidate(&candidate, &address, key_mode.as_ref());
-
         let keypair_bytes = keypair_bytes(&candidate.secret, &candidate.public);
+        let keypair_base58 = bs58::encode(&keypair_bytes).into_string();
+        let keypair_json = solana_json_keypair(&keypair_bytes);
+        print_candidate(
+            &candidate,
+            &address,
+            key_mode.as_ref(),
+            &keypair_base58,
+            &keypair_json,
+        );
         let report = VanityResult {
             private_key_hex: format!("0x{}", hex::encode(candidate.secret.as_bytes())),
             private_key_base58: bs58::encode(candidate.secret.as_bytes()).into_string(),
-            keypair_base58: bs58::encode(&keypair_bytes).into_string(),
-            keypair_json: solana_json_keypair(&candidate.secret, &candidate.public),
+            keypair_base58,
+            keypair_json,
             address: address.clone(),
             attempts: attempts_needed,
             attempts_limit: if max_attempts == u64::MAX {
@@ -515,19 +535,20 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn print_candidate(candidate: &CandidateKey, address: &str, mode: &KeyMode) {
+fn print_candidate(
+    candidate: &CandidateKey,
+    address: &str,
+    mode: &KeyMode,
+    keypair_base58: &str,
+    keypair_json: &str,
+) {
     let secret_hex = hex::encode(candidate.secret.as_bytes());
     let private_bs58 = bs58::encode(candidate.secret.as_bytes()).into_string();
-    let keypair_bs58 =
-        bs58::encode(&keypair_bytes(&candidate.secret, &candidate.public)).into_string();
     println!("Address   : {}", address);
     println!("SecretHex : 0x{}", secret_hex);
     println!("Secret58  : {}", private_bs58);
-    println!("Keypair58 : {}", keypair_bs58);
-    println!(
-        "KeypairJSON: {}",
-        solana_json_keypair(&candidate.secret, &candidate.public)
-    );
+    println!("Keypair58 : {}", keypair_base58);
+    println!("KeypairJSON: {}", keypair_json);
     if let Some(phrase) = candidate.mnemonic.as_ref() {
         println!("Mnemonic  : {}", phrase);
         if let KeyMode::Mnemonic { path_string, .. } = mode {
@@ -558,6 +579,47 @@ fn ensure_base58(value: &str) -> Result<()> {
 
 fn is_base58_char(ch: char) -> bool {
     matches!(ch, '1'..='9' | 'A'..='H' | 'J'..='N' | 'P'..='Z' | 'a'..='k' | 'm'..='z')
+}
+
+fn encode_base58(input: &[u8], out: &mut String) {
+    let mut digits = [0u8; 46];
+    let mut digit_len = 1;
+    digits[0] = 0;
+
+    for &byte in input {
+        let mut carry = byte as u32;
+        for digit in digits[..digit_len].iter_mut() {
+            let val = (*digit as u32) * 256 + carry;
+            *digit = (val % 58) as u8;
+            carry = val / 58;
+        }
+        while carry > 0 {
+            digits[digit_len] = (carry % 58) as u8;
+            carry /= 58;
+            digit_len += 1;
+        }
+    }
+
+    let mut zeros = 0;
+    for b in input {
+        if *b == 0 {
+            zeros += 1;
+        } else {
+            break;
+        }
+    }
+
+    out.clear();
+    out.reserve(zeros + digit_len);
+    for _ in 0..zeros {
+        out.push('1');
+    }
+    for digit in digits[..digit_len].iter().rev() {
+        out.push(BASE58_ALPHABET[*digit as usize] as char);
+    }
+    if out.is_empty() {
+        out.push('1');
+    }
 }
 
 fn matches_pattern(address: &str, prefix: Option<&str>, suffix: Option<&str>) -> bool {
@@ -606,10 +668,21 @@ fn derive_candidate(base_seed: u64, attempt: u64, mode: &KeyMode) -> Option<Cand
 }
 
 fn key_material_from_attempt(base_seed: u64, attempt: u64) -> [u8; 32] {
-    let mut input = [0u8; 16];
-    input[..8].copy_from_slice(&base_seed.to_le_bytes());
-    input[8..].copy_from_slice(&attempt.to_le_bytes());
-    keccak(&input)
+    let mut state = base_seed ^ attempt;
+    let mut out = [0u8; 32];
+    for chunk in out.chunks_mut(8) {
+        state = splitmix64(state);
+        chunk.copy_from_slice(&state.to_le_bytes());
+    }
+    out
+}
+
+fn splitmix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9E3779B97F4A7C15);
+    let mut z = x;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+    z ^ (z >> 31)
 }
 
 fn keypair_bytes(secret: &SecretKey, public: &PublicKey) -> [u8; 64] {
@@ -619,11 +692,8 @@ fn keypair_bytes(secret: &SecretKey, public: &PublicKey) -> [u8; 64] {
     out
 }
 
-fn solana_json_keypair(secret: &SecretKey, public: &PublicKey) -> String {
-    let mut data = Vec::with_capacity(64);
-    data.extend_from_slice(secret.as_bytes());
-    data.extend_from_slice(public.as_bytes());
-    serde_json::to_string(&data).unwrap_or_else(|_| "[]".to_string())
+fn solana_json_keypair(bytes: &[u8; 64]) -> String {
+    serde_json::to_string(&bytes[..]).unwrap_or_else(|_| "[]".to_string())
 }
 
 fn config_fingerprint(
