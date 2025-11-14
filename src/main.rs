@@ -622,10 +622,13 @@ fn format_hex(bytes: &[u8]) -> String {
 }
 
 fn salt_from_attempt(base_seed: u64, attempt: u64) -> [u8; 32] {
-    let mut input = [0u8; 16];
-    input[..8].copy_from_slice(&base_seed.to_le_bytes());
-    input[8..].copy_from_slice(&attempt.to_le_bytes());
-    keccak(&input)
+    let mut state = base_seed ^ attempt;
+    let mut out = [0u8; 32];
+    for chunk in out.chunks_mut(8) {
+        state = splitmix64(state);
+        chunk.copy_from_slice(&state.to_le_bytes());
+    }
+    out
 }
 
 fn config_fingerprint(
@@ -650,6 +653,14 @@ fn config_fingerprint(
         data.push(0x01);
     }
     keccak(&data)
+}
+
+fn splitmix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = x;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 fn load_checkpoint_file(path: &Path) -> Result<CheckpointFile> {
